@@ -22,21 +22,15 @@
  */
 'use strict';
 
-const React = require('React');
-
 export type UIExplorerExample = {
-  key: string;
-  module: React.Component;
+  key: string,
+  module: Object,
 };
 
-var ComponentExamples: Array<UIExplorerExample> = [
+const ComponentExamples: Array<UIExplorerExample> = [
   {
     key: 'ActivityIndicatorExample',
     module: require('./ActivityIndicatorExample'),
-  },
-  {
-    key: 'SliderExample',
-    module: require('./SliderExample'),
   },
   {
     key: 'ImageExample',
@@ -45,6 +39,14 @@ var ComponentExamples: Array<UIExplorerExample> = [
   {
     key: 'ListViewExample',
     module: require('./ListViewExample'),
+  },
+  {
+    key: 'ListViewGridLayoutExample',
+    module: require('./ListViewGridLayoutExample'),
+  },
+  {
+    key: 'ListViewPagingExample',
+    module: require('./ListViewPagingExample'),
   },
   {
     key: 'ModalExample',
@@ -65,6 +67,10 @@ var ComponentExamples: Array<UIExplorerExample> = [
   {
     key: 'ScrollViewSimpleExample',
     module: require('./ScrollViewSimpleExample'),
+  },
+  {
+    key: 'SliderExample',
+    module: require('./SliderExample'),
   },
   {
     key: 'StatusBarExample',
@@ -108,7 +114,7 @@ var ComponentExamples: Array<UIExplorerExample> = [
   },
 ];
 
-const APIExamples = [
+const APIExamples: Array<UIExplorerExample> = [
   {
     key: 'AccessibilityAndroidExample',
     module: require('./AccessibilityAndroidExample'),
@@ -178,6 +184,10 @@ const APIExamples = [
     module: require('./NetInfoExample'),
   },
   {
+    key: 'OrientationChangeExample',
+    module: require('./OrientationChangeExample'),
+  },
+  {
     key: 'PanResponderExample',
     module: require('./PanResponderExample'),
   },
@@ -188,6 +198,10 @@ const APIExamples = [
   {
     key: 'PointerEventsExample',
     module: require('./PointerEventsExample'),
+  },
+  {
+    key: 'RTLExample',
+    module: require('./RTLExample'),
   },
   {
     key: 'ShareExample',

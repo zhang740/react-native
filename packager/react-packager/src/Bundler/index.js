@@ -89,6 +89,10 @@ const validateOpts = declareOpts({
     type: 'boolean',
     default: false,
   },
+  allowBundleUpdates: {
+    type: 'boolean',
+    default: false,
+  },
 });
 
 const assetPropertyBlacklist = new Set([
@@ -253,6 +257,8 @@ class Bundler {
     entryModuleOnly,
     resolutionResponse,
     isolateModuleIDs,
+    generateSourceMaps,
+    assetPlugins,
   }) {
     const onResolutionResponse = response => {
       bundle.setMainModuleId(response.getModuleId(getMainModule(response)));
@@ -280,6 +286,7 @@ class Bundler {
         bundle.finalize({
           runMainModule,
           runBeforeMainModule: runBeforeMainModuleIds,
+          allowUpdates: this._opts.allowBundleUpdates,
         });
         return bundle;
       });
@@ -296,6 +303,8 @@ class Bundler {
       onResolutionResponse,
       finalizeBundle,
       isolateModuleIDs,
+      generateSourceMaps,
+      assetPlugins,
     });
   }
 
@@ -306,6 +315,7 @@ class Bundler {
     sourceMapUrl,
     dev,
     platform,
+    assetPlugins,
   }) {
     const onModuleTransformed = ({module, transformed, response, bundle}) => {
       const deps = Object.create(null);
@@ -334,6 +344,7 @@ class Bundler {
       finalizeBundle,
       minify: false,
       bundle: new PrepackBundle(sourceMapUrl),
+      assetPlugins,
     });
   }
 
@@ -347,11 +358,19 @@ class Bundler {
     unbundle,
     resolutionResponse,
     isolateModuleIDs,
+    generateSourceMaps,
+    assetPlugins,
     onResolutionResponse = noop,
     onModuleTransformed = noop,
     finalizeBundle = noop,
   }) {
-    const findEventId = Activity.startEvent('find dependencies');
+    const findEventId = Activity.startEvent(
+      'Finding dependencies',
+      null,
+      {
+        telemetric: true,
+      },
+    );
     const modulesByName = Object.create(null);
 
     if (!resolutionResponse) {
@@ -374,11 +393,13 @@ class Bundler {
         onProgress,
         minify,
         isolateModuleIDs,
-        generateSourceMaps: unbundle,
+        generateSourceMaps: unbundle || generateSourceMaps,
       });
     }
 
     return Promise.resolve(resolutionResponse).then(response => {
+      bundle.setRamGroups(response.transformOptions.transform.ramGroups);
+
       Activity.endEvent(findEventId);
       onResolutionResponse(response);
 
@@ -400,8 +421,10 @@ class Bundler {
           module,
           bundle,
           entryFilePath,
+          assetPlugins,
           transformOptions: response.transformOptions,
           getModuleId: response.getModuleId,
+          dependencyPairs: response.getResolvedDependencyPairs(module),
         }).then(transformed => {
           modulesByName[transformed.name] = module;
           onModuleTransformed({
@@ -533,7 +556,15 @@ class Bundler {
     );
   }
 
-  _toModuleTransport({module, bundle, entryFilePath, transformOptions, getModuleId}) {
+  _toModuleTransport({
+    module,
+    bundle,
+    entryFilePath,
+    transformOptions,
+    getModuleId,
+    dependencyPairs,
+    assetPlugins,
+  }) {
     let moduleTransport;
     const moduleId = getModuleId(module);
 
@@ -542,7 +573,7 @@ class Bundler {
         this._generateAssetModule_DEPRECATED(bundle, module, moduleId);
     } else if (module.isAsset()) {
       moduleTransport = this._generateAssetModule(
-        bundle, module, moduleId, transformOptions.platform);
+        bundle, module, moduleId, assetPlugins, transformOptions.platform);
     }
 
     if (moduleTransport) {
@@ -566,7 +597,7 @@ class Bundler {
         id: moduleId,
         code,
         map,
-        meta: {dependencies, dependencyOffsets, preloaded},
+        meta: {dependencies, dependencyOffsets, preloaded, dependencyPairs},
         sourceCode: source,
         sourcePath: module.path
       });
@@ -605,7 +636,7 @@ class Bundler {
     });
   }
 
-  _generateAssetObjAndCode(module, platform = null) {
+  _generateAssetObjAndCode(module, assetPlugins, platform = null) {
     const relPath = getPathRelativeToRoot(this._projectRoots, module.path);
     var assetUrlPath = path.join('/assets', path.dirname(relPath));
 
@@ -623,7 +654,7 @@ class Bundler {
     return Promise.all([
       isImage ? sizeOf(module.path) : null,
       this._assetServer.getAssetData(relPath, platform),
-    ]).then(function(res) {
+    ]).then((res) => {
       const dimensions = res[0];
       const assetData = res[1];
       const asset = {
@@ -639,6 +670,8 @@ class Bundler {
         type: assetData.type,
       };
 
+      return this._applyAssetPlugins(assetPlugins, asset);
+    }).then((asset) => {
       const json =  JSON.stringify(filterObject(asset, assetPropertyBlacklist));
       const assetRegistryPath = 'react-native/Libraries/Image/AssetRegistry';
       const code =
@@ -654,11 +687,30 @@ class Bundler {
     });
   }
 
+  _applyAssetPlugins(assetPlugins, asset) {
+    if (!assetPlugins.length) {
+      return asset;
+    }
 
-  _generateAssetModule(bundle, module, moduleId, platform = null) {
+    let [currentAssetPlugin, ...remainingAssetPlugins] = assetPlugins;
+    let assetPluginFunction = require(currentAssetPlugin);
+    let result = assetPluginFunction(asset);
+
+    // If the plugin was an async function, wait for it to fulfill before
+    // applying the remaining plugins
+    if (typeof result.then === 'function') {
+      return result.then(resultAsset =>
+        this._applyAssetPlugins(remainingAssetPlugins, resultAsset)
+      );
+    } else {
+      return this._applyAssetPlugins(remainingAssetPlugins, result);
+    }
+  }
+
+  _generateAssetModule(bundle, module, moduleId, assetPlugins = [], platform = null) {
     return Promise.all([
       module.getName(),
-      this._generateAssetObjAndCode(module, platform),
+      this._generateAssetObjAndCode(module, assetPlugins, platform),
     ]).then(([name, {asset, code, meta}]) => {
       bundle.addAsset(asset);
       return new ModuleTransport({
@@ -679,6 +731,10 @@ class Bundler {
       : null;
     return Promise.resolve(extraOptions)
       .then(extraOptions => Object.assign(options, extraOptions));
+  }
+
+  getResolver() {
+    return this._resolver;
   }
 }
 

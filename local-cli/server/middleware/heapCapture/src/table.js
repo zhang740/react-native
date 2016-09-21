@@ -75,81 +75,22 @@ DropTarget.propTypes = {
   dropAction: React.PropTypes.func.isRequired,
 };
 
-class Table extends React.Component { // eslint-disable-line no-unused-vars
+class TableHeader extends React.Component {
   constructor(props) {
     super(props);
-    this.state = {
-      aggrow: props.aggrow,
-      viewport: { top: 0, height: 100 },
-    };
   }
-
-  scroll(e) {
-    const viewport = e.target;
-    const top = Math.floor((viewport.scrollTop - viewport.clientHeight * 1.0) / rowHeight);
-    const height = Math.ceil(viewport.clientHeight * 3.0 / rowHeight);
-    this.state.viewport.top = top;
-    this.state.viewport.height = height;
-    this.forceUpdate();
-  }
-
-  dropAggregator(s, d) {
-    const aggrow = this.state.aggrow;
-    console.log('dropped ' + s + ' to ' + d);
-    if (s.startsWith('aggregate:active:')) {
-      const sIndex = parseInt(s.substr(17), 10);
-      let dIndex = -1;
-      const active = aggrow.getActiveAggregators();
-      const dragged = active[sIndex];
-      if (d.startsWith('aggregate:insert:')) {
-        dIndex = parseInt(d.substr(17), 10);
-      } else if (d === 'divider:insert') {
-        dIndex = active.length;
-      } else {
-        throw 'not allowed to drag ' + s + ' to ' + d;
-      }
-      if (dIndex > sIndex) {
-        dIndex--;
-      }
-      active.splice(sIndex, 1);
-      active.splice(dIndex, 0, dragged);
-      aggrow.setActiveAggregators(active);
-      this.forceUpdate();
-    } else if (s.startsWith('expander:active:')) {
-      const sIndex = parseInt(s.substr(16), 10);
-      let dIndex = -1;
-      const active = aggrow.getActiveExpanders();
-      const dragged = active[sIndex];
-      if (d.startsWith('expander:insert:')) {
-        dIndex = parseInt(d.substr(16), 10);
-      } else if (d === 'divider:insert') {
-        dIndex = 0;
-      } else {
-        throw 'not allowed to drag ' + s + ' to ' + d;
-      }
-      if (dIndex > sIndex) {
-        dIndex--;
-      }
-      active.splice(sIndex, 1);
-      active.splice(dIndex, 0, dragged);
-      aggrow.setActiveExpanders(active);
-      this.forceUpdate();
-    }
-  }
-
   render() {
-    const headers = [];
-    const aggrow = this.state.aggrow;
+    const aggrow = this.props.aggrow;
     const aggregators = aggrow.getActiveAggregators();
     const expanders = aggrow.getActiveExpanders();
-    // aggregators
+    const headers = [];
     for (let i = 0; i < aggregators.length; i++) {
       const name = aggrow.getAggregatorName(aggregators[i]);
       headers.push((
         <DropTarget
           id={'aggregate:insert:' + i.toString()}
-          dropFilter={()=>{return true; }}
-          dropAction={(s, d)=>{ this.dropAggregator(s, d); }}
+          dropFilter={(s) => s.startsWith('aggregate')}
+          dropAction={this.props.dropAction}
         >
           <div style={{
             width: '16px',
@@ -165,8 +106,8 @@ class Table extends React.Component { // eslint-disable-line no-unused-vars
     headers.push((
       <DropTarget
         id="divider:insert"
-        dropFilter={()=>{return true; }}
-        dropAction={(s, d)=>{ this.dropAggregator(s, d); }}
+        dropFilter={(s) => s.startsWith('aggregate') || s.startsWith('expander')}
+        dropAction={this.props.dropAction}
       >
         <div style={{
           width: '16px',
@@ -193,7 +134,7 @@ class Table extends React.Component { // eslint-disable-line no-unused-vars
         <DropTarget
           id={'expander:insert:' + (i + 1).toString()}
           dropFilter={()=>{return true; }}
-          dropAction={(s, d)=>{ this.dropAggregator(s, d);}}
+          dropAction={this.props.dropAction}
         >
           <div style={{
             height: 'inherit',
@@ -205,24 +146,182 @@ class Table extends React.Component { // eslint-disable-line no-unused-vars
         </DropTarget>)
       );
     }
+    return (
+      <div style={{
+        width: '100%',
+        height: '26px',
+        display: 'flex',
+        flexDirection: 'row',
+        alignItems: 'center',
+        borderBottom: '2px solid black',
+      }}>
+        {headers}
+      </div>
+    );
+  }
+}
 
+TableHeader.propTypes = {
+  aggrow: React.PropTypes.object.isRequired,
+  dropAction: React.PropTypes.func.isRequired,
+};
+
+class Table extends React.Component { // eslint-disable-line no-unused-vars
+  constructor(props) {
+    super(props);
+    this.state = {
+      aggrow: props.aggrow,
+      viewport: { top: 0, height: 100 },
+      cursor: 0,
+    };
+  }
+
+  scroll(e) {
+    const viewport = e.target;
+    const top = Math.floor((viewport.scrollTop - viewport.clientHeight * 1.0) / rowHeight);
+    const height = Math.ceil(viewport.clientHeight * 3.0 / rowHeight);
+    if (top !== this.state.viewport.top || height !== this.state.viewport.height) {
+      this.setState({viewport: {top, height}});
+    }
+  }
+
+  _contractRow(row) {
+    let newCursor = this.state.cursor;
+    if (newCursor > row.top && newCursor < row.top + row.height) { // in contracted section
+      newCursor = row.top;
+    } else if (newCursor >= row.top + row.height) { // below contracted section
+      newCursor -= row.height - 1;
+    }
+    this.state.aggrow.contract(row);
+    this.setState({cursor: newCursor});
+    console.log('-' + row.top);
+  }
+
+  _expandRow(row) {
+    let newCursor = this.state.cursor;
+    this.state.aggrow.expand(row);
+    if (newCursor > row.top) {  // below expanded section
+      newCursor += row.height - 1;
+    }
+    this.setState({cursor: newCursor});
+    console.log('+' + row.top);
+  }
+
+  _scrollDiv: null;
+
+  _keepCursorInViewport() {
+    if (this._scrollDiv) {
+      const cursor = this.state.cursor;
+      const scrollDiv = this._scrollDiv;
+      if (cursor * rowHeight < scrollDiv.scrollTop + scrollDiv.clientHeight * 0.1) {
+        scrollDiv.scrollTop = cursor * rowHeight - scrollDiv.clientHeight * 0.1;
+      } else if ((cursor + 1) * rowHeight > scrollDiv.scrollTop + scrollDiv.clientHeight * 0.9) {
+        scrollDiv.scrollTop = (cursor + 1) * rowHeight - scrollDiv.clientHeight * 0.9;
+      }
+    }
+  }
+
+  keydown(e) {
+    const aggrow = this.state.aggrow;
+    let cursor = this.state.cursor;
+    let row = aggrow.getRows(cursor, 1)[0];
+    switch (e.keyCode) {
+      case 38: // up
+        if (cursor > 0) {
+          this.setState({cursor: cursor - 1});
+          this._keepCursorInViewport();
+        }
+        e.preventDefault();
+        break;
+      case 40: // down
+        if (cursor < aggrow.getHeight() - 1) {
+          this.setState({cursor: cursor + 1});
+          this._keepCursorInViewport();
+        }
+        e.preventDefault();
+        break;
+      case 37: // left
+        if (aggrow.canContract(row)) {
+          this._contractRow(row);
+        } else if (aggrow.getRowIndent(row) > 0) {
+          const indent = aggrow.getRowIndent(row) - 1;
+          while (aggrow.getRowIndent(row) > indent) {
+            cursor--;
+            row = aggrow.getRows(cursor, 1)[0];
+          }
+          this.setState({cursor: cursor});
+          this._keepCursorInViewport();
+        }
+        e.preventDefault();
+        break;
+      case 39: // right
+        if (aggrow.canExpand(row)) {
+          this._expandRow(row);
+        } else if (cursor < aggrow.getHeight() - 1) {
+          this.setState({cursor: cursor + 1});
+          this._keepCursorInViewport();
+        }
+        e.preventDefault();
+        break;
+    }
+  }
+
+  dropAction(s, d) {
+    const aggrow = this.state.aggrow;
+    console.log('dropped ' + s + ' to ' + d);
+    if (s.startsWith('aggregate:active:')) {
+      const sIndex = parseInt(s.substr(17), 10);
+      let dIndex = -1;
+      const active = aggrow.getActiveAggregators();
+      const dragged = active[sIndex];
+      if (d.startsWith('aggregate:insert:')) {
+        dIndex = parseInt(d.substr(17), 10);
+      } else if (d === 'divider:insert') {
+        dIndex = active.length;
+      } else {
+        throw 'not allowed to drag ' + s + ' to ' + d;
+      }
+      if (dIndex > sIndex) {
+        dIndex--;
+      }
+      active.splice(sIndex, 1);
+      active.splice(dIndex, 0, dragged);
+      aggrow.setActiveAggregators(active);
+      this.setState({cursor:0});
+    } else if (s.startsWith('expander:active:')) {
+      const sIndex = parseInt(s.substr(16), 10);
+      let dIndex = -1;
+      const active = aggrow.getActiveExpanders();
+      const dragged = active[sIndex];
+      if (d.startsWith('expander:insert:')) {
+        dIndex = parseInt(d.substr(16), 10);
+      } else if (d === 'divider:insert') {
+        dIndex = 0;
+      } else {
+        throw 'not allowed to drag ' + s + ' to ' + d;
+      }
+      if (dIndex > sIndex) {
+        dIndex--;
+      }
+      active.splice(sIndex, 1);
+      active.splice(dIndex, 0, dragged);
+      aggrow.setActiveExpanders(active);
+      this.setState({cursor:0});
+    }
+  }
+
+  render() {
     return (
       <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <div style={{
-          width: '100%',
-          height: '26px',
-          display: 'flex',
-          flexDirection: 'row',
-          alignItems: 'center',
-          borderBottom: '2px solid black',
-        }}>
-          {headers}
-        </div>
-        <div style={{
-          width: '100%',
-          flexGrow: '1',
-          overflow: 'scroll'
-        }} onScroll={ (e) => this.scroll(e) }>
+        <TableHeader aggrow={this.state.aggrow} dropAction={(s, d) => this.dropAction(s, d)} />
+        <div
+          style={{
+            width: '100%',
+            flexGrow: '1',
+            overflow: 'scroll'
+          }}
+          onScroll={ (e) => this.scroll(e) }
+          ref={(div) => { this._scrollDiv = div; } }>
           <div style={{ position: 'relative' }}>
             { this.renderVirtualizedRows() }
           </div>
@@ -259,6 +358,9 @@ class Table extends React.Component { // eslint-disable-line no-unused-vars
     if (row.parent !== null && (row.parent.expander % 2 === 0)) {
       bg = 'white';
     }
+    if (row.top === this.state.cursor) {
+      bg = 'lightblue';
+    }
     for (let i = 0; i < aggregates.length; i++) {
       var aggregate = aggrow.getRowAggregate(row, i);
       columns.push((
@@ -288,43 +390,77 @@ class Table extends React.Component { // eslint-disable-line no-unused-vars
       }}></div>
     ));
     if (aggrow.canExpand(row)) {
-      rowText += '+';
+      columns.push((
+        <div
+          style={{
+            marginLeft: indent.toString() + 'px',
+            flexShrink: '0',
+            width: '12px',
+            textAlign: 'center',
+            border: '1px solid gray',
+          }}
+          onClick={ () => this._expandRow(row) }
+        >+</div>
+      ));
     } else if (aggrow.canContract(row)) {
-      rowText += '-';
+      columns.push((
+        <div
+          style={{
+            marginLeft: indent.toString() + 'px',
+            flexShrink: '0',
+            width: '12px',
+            textAlign: 'center',
+            border: '1px solid gray',
+          }}
+          onClick={ () => this._contractRow(row) }
+        >-</div>
+      ));
     } else {
-      rowText += ' ';
+      columns.push((
+        <div
+          style={{
+            marginLeft: indent.toString() + 'px',
+          }}
+        ></div>
+      ));
     }
     rowText += aggrow.getRowLabel(row);
     columns.push((
       <div style={{
-        marginLeft: indent.toString() + 'px',
         flexShrink: '0',
-        whiteSpace: 'nowrap'
+        whiteSpace: 'nowrap',
+        marginRight: '20px'
       }}>
         {rowText}
       </div>
     ));
     return (
-      <div style={{
+      <div
+        key={row.top}
+        style={{
           position: 'absolute',
           height: (rowHeight - 1).toString() + 'px',
           top: (rowHeight * row.top).toString() + 'px',
           display: 'flex',
           flexDirection: 'row',
+          alignItems: 'center',
           backgroundColor: bg,
           borderBottom: '1px solid gray',
         }}
         onClick={ () => {
-          if (aggrow.canExpand(row)) {
-            aggrow.expand(row);
-            this.forceUpdate();
-          } else if (aggrow.canContract(row)) {
-            aggrow.contract(row);
-            this.forceUpdate();
-          }
+          this.setState({cursor: row.top});
         }}>
         {columns}
       </div>
     );
+  }
+
+  componentDidMount() {
+    this.keydown = this.keydown.bind(this);
+    document.body.addEventListener('keydown', this.keydown);
+  }
+
+  componentWillUnmount() {
+    document.body.removeEventListener('keydown', this.keydown);
   }
 }
